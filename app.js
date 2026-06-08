@@ -4,7 +4,7 @@ let puntosLayer, zonasLayer, macrosLayer;
 let puntosGeoJSON = null;
 let zonasGeoJSON = null;
 let macrosGeoJSON = null;
-let precioMin, precioMax;
+let precioMinGlobal, precioMaxGlobal;
 let colorScheme = 'quantile';
 let currentFeatures = [];
 
@@ -27,9 +27,9 @@ function getQuantileColor(precio, preciosArray) {
     const count = sorted.length;
     const t1 = sorted[Math.floor(count * 1/3)];
     const t2 = sorted[Math.floor(count * 2/3)];
-    if (precio <= t1) return '#369bee';
+    if (precio <= t1) return '#1899de';
     if (precio <= t2) return '#fee08b';
-    return '#ff0000';
+    return '#df0d0d';
 }
 
 function updateLegend() {
@@ -113,6 +113,61 @@ function setPuntosOpacity(percent) {
     });
 }
 
+// Función auxiliar para obtener el rango de precios de puntos que cumplen filtros espaciales (sin aplicar filtro de precio)
+function getPriceRangeBySpatialFilters() {
+    const macroSeleccionado = document.getElementById('macro-select').value;
+    const zonaSeleccionada = document.getElementById('zone-select').value;
+    if (!puntosGeoJSON) return null;
+
+    let features = puntosGeoJSON.features.filter(f => f.properties.precio_pre > 0);
+
+    if (macroSeleccionado !== 'all' && macrosGeoJSON) {
+        const macroFeature = macrosGeoJSON.features.find(f => f.properties.macro_ante === macroSeleccionado);
+        if (macroFeature) {
+            const polygon = turf.polygon(macroFeature.geometry.coordinates);
+            features = features.filter(f => {
+                const point = turf.point(f.geometry.coordinates);
+                return turf.booleanPointInPolygon(point, polygon);
+            });
+        }
+    }
+
+    if (zonaSeleccionada !== 'all' && zonasGeoJSON) {
+        const zonaFeature = zonasGeoJSON.features.find(f => f.properties.GDBSNOMB === zonaSeleccionada);
+        if (zonaFeature) {
+            const polygon = turf.polygon(zonaFeature.geometry.coordinates);
+            features = features.filter(f => {
+                const point = turf.point(f.geometry.coordinates);
+                return turf.booleanPointInPolygon(point, polygon);
+            });
+        }
+    }
+
+    const prices = features.map(f => f.properties.precio_pre).filter(p => p > 0);
+    if (prices.length === 0) return null;
+    return { min: Math.min(...prices), max: Math.max(...prices) };
+}
+
+// Actualizar slider de rango con nuevos valores (sin disparar evento slide)
+function updateSliderRange(minVal, maxVal, preserveCurrent = true) {
+    const currentMin = $("#price-slider").slider("values")[0];
+    const currentMax = $("#price-slider").slider("values")[1];
+    let newMin = minVal;
+    let newMax = maxVal;
+    if (preserveCurrent) {
+        // Ajustar valores actuales al nuevo rango (clamp)
+        newMin = Math.max(minVal, Math.min(currentMin, maxVal));
+        newMax = Math.min(maxVal, Math.max(currentMax, minVal));
+    }
+    $("#price-slider").slider("option", "min", minVal);
+    $("#price-slider").slider("option", "max", maxVal);
+    $("#price-slider").slider("values", [newMin, newMax]);
+    $("#min-price-label").text(Math.round(newMin).toLocaleString());
+    $("#max-price-label").text(Math.round(newMax).toLocaleString());
+    return { min: newMin, max: newMax };
+}
+
+// Función principal de filtrado (combina macrodistrito, zona y rango de precio)
 function filterPoints() {
     const minPrice = $("#price-slider").slider("values")[0];
     const maxPrice = $("#price-slider").slider("values")[1];
@@ -170,7 +225,6 @@ function filterPoints() {
         onEachFeature: (feature, layer) => {
             const precio = feature.properties.precio_pre;
             if (precio > 0) {
-                // Redondear el precio a entero y formatear sin decimales
                 layer.bindTooltip(`$${Math.round(precio).toLocaleString()} USD`, { sticky: true, direction: 'top' });
             } else {
                 layer.bindTooltip(`Precio atípico`, { sticky: true });
@@ -180,7 +234,6 @@ function filterPoints() {
     setPuntosOpacity(currentPuntosOpacity);
     recolorPuntos();
 
-    // Estadísticas redondeadas a enteros
     const prices = features.map(f => f.properties.precio_pre).filter(p => p > 0);
     const count = prices.length;
     const avg = count ? prices.reduce((a,b) => a+b,0) / count : 0;
@@ -190,7 +243,6 @@ function filterPoints() {
     document.getElementById('avg-price').innerText = Math.round(avg).toLocaleString();
     document.getElementById('range-price').innerText = count ? `${Math.round(minP).toLocaleString()} - ${Math.round(maxP).toLocaleString()}` : '-';
 
-    // Resaltar macrodistrito
     if (macrosLayer) {
         macrosLayer.eachLayer(layer => {
             const nombre = layer.feature.properties.macro_ante;
@@ -203,7 +255,6 @@ function filterPoints() {
         });
     }
 
-    // Resaltar zona
     if (zonasLayer) {
         zonasLayer.eachLayer(layer => {
             const nombre = layer.feature.properties.GDBSNOMB;
@@ -215,6 +266,25 @@ function filterPoints() {
             }
         });
     }
+    
+    // Asegurar que las zonas queden por encima de los macrodistritos
+    if (zonasLayer) zonasLayer.bringToFront();
+    if (puntosLayer) puntosLayer.bringToFront();
+}
+
+// Actualizar slider basado en filtros espaciales (macro/zona) sin aplicar filtro de precio aún
+function updateSliderFromSpatialFilters() {
+    const range = getPriceRangeBySpatialFilters();
+    if (range) {
+        // Actualizar el slider al nuevo rango, preservando la selección actual dentro de lo posible
+        updateSliderRange(range.min, range.max, true);
+    }
+}
+
+// Wrapper para cambios que deben actualizar tanto el slider como los puntos
+function onSpatialFilterChange() {
+    updateSliderFromSpatialFilters();
+    filterPoints();
 }
 
 async function init() {
@@ -227,33 +297,35 @@ async function init() {
     zonasGeoJSON = await zonasResp.json();
     macrosGeoJSON = await macrosResp.json();
 
-    const precios = puntosGeoJSON.features.map(f => f.properties.precio_pre).filter(p => p > 0);
-    if (precios.length === 0) {
+    const preciosGlobales = puntosGeoJSON.features.map(f => f.properties.precio_pre).filter(p => p > 0);
+    if (preciosGlobales.length === 0) {
         alert("No hay puntos con precios positivos. Verifica los datos.");
         return;
     }
-    precioMin = Math.min(...precios);
-    precioMax = Math.max(...precios);
+    precioMinGlobal = Math.min(...preciosGlobales);
+    precioMaxGlobal = Math.max(...preciosGlobales);
 
+    // Configurar slider inicial con rango global
     $("#price-slider").slider({
         range: true,
-        min: precioMin,
-        max: precioMax,
-        values: [precioMin, precioMax],
+        min: precioMinGlobal,
+        max: precioMaxGlobal,
+        values: [precioMinGlobal, precioMaxGlobal],
         slide: function(event, ui) {
             $("#min-price-label").text(Math.round(ui.values[0]).toLocaleString());
             $("#max-price-label").text(Math.round(ui.values[1]).toLocaleString());
-            filterPoints();
+            filterPoints();   // aplicar filtro de precio sobre el estado actual
         }
     });
-    $("#min-price-label").text(Math.round(precioMin).toLocaleString());
-    $("#max-price-label").text(Math.round(precioMax).toLocaleString());
+    $("#min-price-label").text(Math.round(precioMinGlobal).toLocaleString());
+    $("#max-price-label").text(Math.round(precioMaxGlobal).toLocaleString());
 
     map = L.map('map').setView([-16.5106, -68.0801], 12);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
+    // Capa de macrodistritos
     macrosLayer = L.geoJSON(macrosGeoJSON, {
         style: { color: '#006400', weight: 2, fillOpacity: 0.05, dashArray: '3' },
         onEachFeature: (feature, layer) => {
@@ -263,6 +335,7 @@ async function init() {
     }).addTo(map);
     setLayerOpacity(macrosLayer, 30);
 
+    // Capa de zonas (por encima de macrodistritos)
     zonasLayer = L.geoJSON(zonasGeoJSON, {
         style: { color: '#8B0000', weight: 2, fillOpacity: 0.08, dashArray: '3' },
         onEachFeature: (feature, layer) => {
@@ -271,7 +344,9 @@ async function init() {
         }
     }).addTo(map);
     setLayerOpacity(zonasLayer, 20);
+    zonasLayer.bringToFront();
 
+    // Rellenar selectores
     const macroSelect = document.getElementById('macro-select');
     const macrosNombres = [...new Set(macrosGeoJSON.features.map(f => f.properties.macro_ante))].filter(Boolean).sort();
     macrosNombres.forEach(n => {
@@ -290,6 +365,7 @@ async function init() {
         zoneSelect.appendChild(opt);
     });
 
+    // Selector de esquema de color
     const colorSelect = document.getElementById('color-scheme');
     colorScheme = colorSelect.value;
     colorSelect.addEventListener('change', (e) => {
@@ -298,22 +374,30 @@ async function init() {
         if (puntosLayer) recolorPuntos();
     });
 
+    // Filtros espaciales: al cambiar macro o zona, primero ajustamos el slider y luego filtramos puntos
+    macroSelect.addEventListener('change', () => {
+        onSpatialFilterChange();
+    });
+    zoneSelect.addEventListener('change', () => {
+        onSpatialFilterChange();
+    });
+
+    // Botón reset: restablece macro y zona a "all" y slider a rango global
+    document.getElementById('reset-btn').addEventListener('click', () => {
+        document.getElementById('macro-select').value = 'all';
+        document.getElementById('zone-select').value = 'all';
+        // Actualizar slider al rango global completo
+        updateSliderRange(precioMinGlobal, precioMaxGlobal, false);
+        filterPoints();  // filtrará todos los puntos sin restricción espacial
+    });
+
+    // Inicializar puntos
     filterPoints();
     updateLegend();
 
     map.on('zoomend', () => updateRadii());
-    macroSelect.addEventListener('change', () => filterPoints());
-    zoneSelect.addEventListener('change', () => filterPoints());
-    document.getElementById('reset-btn').addEventListener('click', () => {
-        $("#price-slider").slider("values", [precioMin, precioMax]);
-        $("#min-price-label").text(Math.round(precioMin).toLocaleString());
-        $("#max-price-label").text(Math.round(precioMax).toLocaleString());
-        document.getElementById('macro-select').value = 'all';
-        document.getElementById('zone-select').value = 'all';
-        filterPoints();
-    });
 
-    // Controles de capas
+    // Controles de capas (igual que antes, con bringToFront cuando se activan)
     const toggleMacros = document.getElementById('toggle-macros');
     const opacityMacros = document.getElementById('opacity-macros');
     const opacityMacrosVal = document.getElementById('opacity-macros-val');
@@ -323,6 +407,8 @@ async function init() {
         } else {
             if (macrosLayer && map.hasLayer(macrosLayer)) map.removeLayer(macrosLayer);
         }
+        if (toggleMacros.checked && zonasLayer) zonasLayer.bringToFront();
+        if (puntosLayer) puntosLayer.bringToFront();
     });
     opacityMacros.addEventListener('input', () => {
         const val = opacityMacros.value;
@@ -339,6 +425,8 @@ async function init() {
         } else {
             if (zonasLayer && map.hasLayer(zonasLayer)) map.removeLayer(zonasLayer);
         }
+        if (toggleZonas.checked) zonasLayer.bringToFront();
+        if (puntosLayer) puntosLayer.bringToFront();
     });
     opacityZonas.addEventListener('input', () => {
         const val = opacityZonas.value;
@@ -358,6 +446,7 @@ async function init() {
         } else {
             if (puntosLayer && map.hasLayer(puntosLayer)) map.removeLayer(puntosLayer);
         }
+        if (puntosLayer) puntosLayer.bringToFront();
     });
     opacityPuntos.addEventListener('input', () => {
         const val = opacityPuntos.value;
