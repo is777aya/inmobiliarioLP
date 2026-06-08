@@ -27,9 +27,9 @@ function getQuantileColor(precio, preciosArray) {
     const count = sorted.length;
     const t1 = sorted[Math.floor(count * 1/3)];
     const t2 = sorted[Math.floor(count * 2/3)];
-    if (precio <= t1) return '#d73027';
+    if (precio <= t1) return '#169aff';
     if (precio <= t2) return '#fee08b';
-    return '#66bd63';
+    return '#ff1e1e';
 }
 
 function updateLegend() {
