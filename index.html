@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Dashboard Catastro - Predicción de Precios</title>
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- jQuery UI -->
+    <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.2/themes/base/jquery-ui.css">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.js"></script>
+    <!-- Turf.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Roboto, sans-serif; }
+        body { background: #1a1e2c; color: #f0f0f0; }
+        .dashboard { display: flex; height: 100vh; overflow: hidden; }
+        .sidebar {
+            width: 320px;
+            background: rgba(18, 22, 35, 0.95);
+            backdrop-filter: blur(10px);
+            border-right: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            z-index: 10;
+            box-shadow: 2px 0 12px rgba(0,0,0,0.3);
+            overflow-y: auto;
+        }
+        .sidebar h2 { font-size: 1.5rem; margin-bottom: 10px; display: flex; align-items: center; gap: 10px; }
+        .sidebar h2 i { color: #f97316; }
+        .subtitle { font-size: 0.8rem; color: #aaa; margin-bottom: 20px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+        .filter-group { margin-bottom: 25px; }
+        .filter-group label { display: block; font-size: 0.85rem; margin-bottom: 8px; font-weight: 600; }
+        select {
+            width: 100%;
+            padding: 10px;
+            background: #0f1119;
+            border: 1px solid #2a2e45;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        .price-values { display: flex; justify-content: space-between; margin-top: 8px; font-size: 0.85rem; }
+        .stats {
+            background: #0f1119;
+            border-radius: 12px;
+            padding: 15px;
+            margin-top: 20px;
+            text-align: center;
+        }
+        .stats p { margin: 8px 0; }
+        .btn-reset {
+            background: #f97316;
+            border: none;
+            color: white;
+            padding: 10px;
+            border-radius: 20px;
+            margin-top: 15px;
+            cursor: pointer;
+            width: 100%;
+            font-weight: bold;
+        }
+        .btn-reset:hover { background: #fd7e24; }
+        .main-content { flex: 1; position: relative; }
+        #map { height: 100%; width: 100%; background: #1a1e2c; }
+        .info-panel {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(4px);
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        .map-layer-control {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(18, 22, 35, 0.9);
+            backdrop-filter: blur(8px);
+            border-radius: 12px;
+            padding: 12px;
+            min-width: 220px;
+            z-index: 1000;
+            border: 1px solid rgba(255,255,255,0.2);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            font-size: 0.8rem;
+        }
+        .map-layer-control h4 {
+            margin: 0 0 8px 0;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            border-bottom: 1px solid #2a2e45;
+            padding-bottom: 4px;
+        }
+        .map-layer-control .control-item {
+            margin-bottom: 10px;
+        }
+        .map-layer-control .control-item label {
+            cursor: pointer;
+            margin-left: 4px;
+        }
+        .map-layer-control .slider-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 4px;
+            margin-left: 22px;
+        }
+        .map-layer-control input[type="range"] {
+            flex: 1;
+            height: 3px;
+            -webkit-appearance: none;
+            background: #2a2e45;
+        }
+        .map-layer-control input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #f97316;
+            cursor: pointer;
+        }
+        .map-layer-control .opacity-value {
+            font-size: 0.7rem;
+            min-width: 35px;
+            text-align: right;
+        }
+        .map-legend {
+            position: absolute;
+            bottom: 80px;
+            right: 20px;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(4px);
+            border-radius: 8px;
+            padding: 8px 12px;
+            z-index: 1000;
+            font-size: 11px;
+            font-family: monospace;
+            border-left: 3px solid #f97316;
+            display: none;
+        }
+        .map-legend .legend-title {
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+        .map-legend .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 2px;
+        }
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+        @media (max-width: 768px) {
+            .sidebar { width: 260px; }
+            .map-layer-control { top: 10px; right: 10px; padding: 8px; min-width: 180px; }
+        }
+    </style>
+</head>
+<body>
+<div class="dashboard">
+    <div class="sidebar">
+        <h2><i class="fa-solid fa-chart-line"></i> Valoración Inmobiliaria</h2>
+        <div class="subtitle">Estimación venta de casas (USD)</div>
+
+        <div class="filter-group">
+            <label><i class="fa-regular fa-building"></i> Macrodistrito</label>
+            <select id="macro-select"><option value="all">Todos los macrodistritos</option></select>
+        </div>
+
+        <div class="filter-group">
+            <label><i class="fa-regular fa-building"></i> Zona / Barrio</label>
+            <select id="zone-select"><option value="all">Todas las zonas</option></select>
+        </div>
+
+        <div class="filter-group">
+            <label><i class="fa-solid fa-sliders-h"></i> Rango de precio (USD)</label>
+            <div id="price-slider"></div>
+            <div class="price-values">
+                <span id="min-price-label">0</span>
+                <span id="max-price-label">0</span>
+            </div>
+        </div>
+
+        <div class="stats">
+            <p><i class="fa-solid fa-location-dot"></i> Puntos visibles: <span id="points-count">0</span></p>
+            <p><i class="fa-solid fa-chart-simple"></i> Precio promedio: <span id="avg-price">0</span> USD</p>
+            <p><i class="fa-solid fa-ranking-star"></i> Rango: <span id="range-price">-</span></p>
+        </div>
+
+        <button id="reset-btn" class="btn-reset"><i class="fa-solid fa-arrows-spin"></i> Restablecer filtros</button>
+    </div>
+    <div class="main-content">
+        <div id="map"></div>
+        <div class="info-panel"><i class="fa-regular fa-circle-info"></i> Círculo más grande = mayor precio</div>
+        
+        <div class="map-layer-control">
+            <h4><i class="fa-solid fa-layer-group"></i> Capas</h4>
+            <div class="control-item">
+                <div style="display: flex; align-items: center;">
+                    <input type="checkbox" id="toggle-macros" checked>
+                    <label for="toggle-macros">Macrodistritos</label>
+                </div>
+                <div class="slider-group">
+                    <input type="range" id="opacity-macros" min="0" max="100" value="30">
+                    <span class="opacity-value" id="opacity-macros-val">30%</span>
+                </div>
+            </div>
+            <div class="control-item">
+                <div style="display: flex; align-items: center;">
+                    <input type="checkbox" id="toggle-zonas" checked>
+                    <label for="toggle-zonas">Zonas</label>
+                </div>
+                <div class="slider-group">
+                    <input type="range" id="opacity-zonas" min="0" max="100" value="20">
+                    <span class="opacity-value" id="opacity-zonas-val">20%</span>
+                </div>
+            </div>
+            <div class="control-item">
+                <div style="display: flex; align-items: center;">
+                    <input type="checkbox" id="toggle-puntos" checked>
+                    <label for="toggle-puntos">Puntos de venta</label>
+                </div>
+                <div class="slider-group">
+                    <input type="range" id="opacity-puntos" min="0" max="100" value="80">
+                    <span class="opacity-value" id="opacity-puntos-val">80%</span>
+                </div>
+            </div>
+            <div class="control-item" style="margin-top: 10px; border-top: 1px solid #2a2e45; padding-top: 8px;">
+                <div style="margin-bottom: 5px;">
+                    <i class="fa-solid fa-palette"></i> Esquema de color
+                </div>
+                <select id="color-scheme" style="width: 100%; background: #0f1119; border: 1px solid #2a2e45; color: white; border-radius: 5px; padding: 5px;">
+                    <option value="single">Color único (naranja)</option>
+                    <option value="quantile" selected>Cuantiles (3 categorías)</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="legend" class="map-legend" style="display: none;">
+            <div class="legend-title">Categoria de Precios</div>
+            <div class="legend-item"><div class="legend-color" style="background: #2f94e8;"></div><span>Precio bajo</span></div>
+            <div class="legend-item"><div class="legend-color" style="background: #fee08b;"></div><span>Precio medio</span></div>
+            <div class="legend-item"><div class="legend-color" style="background: #d20000;"></div><span>Precio alto</span></div>
+        </div>
+    </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
