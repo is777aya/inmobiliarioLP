@@ -113,14 +113,16 @@ function setPuntosOpacity(percent) {
     });
 }
 
-// Función auxiliar para obtener el rango de precios de puntos que cumplen filtros espaciales (sin aplicar filtro de precio)
+// Obtiene el rango de precios de los puntos que cumplen los filtros espaciales (macro y/o zona)
 function getPriceRangeBySpatialFilters() {
     const macroSeleccionado = document.getElementById('macro-select').value;
     const zonaSeleccionada = document.getElementById('zone-select').value;
     if (!puntosGeoJSON) return null;
 
+    // Partimos de todos los puntos con precio > 0
     let features = puntosGeoJSON.features.filter(f => f.properties.precio_pre > 0);
 
+    // Filtrar por macrodistrito si se seleccionó uno (no "all")
     if (macroSeleccionado !== 'all' && macrosGeoJSON) {
         const macroFeature = macrosGeoJSON.features.find(f => f.properties.macro_ante === macroSeleccionado);
         if (macroFeature) {
@@ -132,6 +134,7 @@ function getPriceRangeBySpatialFilters() {
         }
     }
 
+    // Filtrar por zona si se seleccionó una (no "all")
     if (zonaSeleccionada !== 'all' && zonasGeoJSON) {
         const zonaFeature = zonasGeoJSON.features.find(f => f.properties.GDBSNOMB === zonaSeleccionada);
         if (zonaFeature) {
@@ -148,17 +151,21 @@ function getPriceRangeBySpatialFilters() {
     return { min: Math.min(...prices), max: Math.max(...prices) };
 }
 
-// Actualizar slider de rango con nuevos valores (sin disparar evento slide)
+// Actualiza los límites del slider y opcionalmente los valores seleccionados
 function updateSliderRange(minVal, maxVal, preserveCurrent = true) {
     const currentMin = $("#price-slider").slider("values")[0];
     const currentMax = $("#price-slider").slider("values")[1];
     let newMin = minVal;
     let newMax = maxVal;
     if (preserveCurrent) {
-        // Ajustar valores actuales al nuevo rango (clamp)
+        // Clampeamos los valores actuales dentro del nuevo rango
         newMin = Math.max(minVal, Math.min(currentMin, maxVal));
         newMax = Math.min(maxVal, Math.max(currentMax, minVal));
+    } else {
+        newMin = minVal;
+        newMax = maxVal;
     }
+    // Actualizar límites y valores
     $("#price-slider").slider("option", "min", minVal);
     $("#price-slider").slider("option", "max", maxVal);
     $("#price-slider").slider("values", [newMin, newMax]);
@@ -167,7 +174,7 @@ function updateSliderRange(minVal, maxVal, preserveCurrent = true) {
     return { min: newMin, max: newMax };
 }
 
-// Función principal de filtrado (combina macrodistrito, zona y rango de precio)
+// Filtra los puntos y actualiza el mapa, estadísticas y colores
 function filterPoints() {
     const minPrice = $("#price-slider").slider("values")[0];
     const maxPrice = $("#price-slider").slider("values")[1];
@@ -267,21 +274,24 @@ function filterPoints() {
         });
     }
     
-    // Asegurar que las zonas queden por encima de los macrodistritos
     if (zonasLayer) zonasLayer.bringToFront();
     if (puntosLayer) puntosLayer.bringToFront();
 }
 
-// Actualizar slider basado en filtros espaciales (macro/zona) sin aplicar filtro de precio aún
+// Actualiza el slider basándose solo en los filtros espaciales (sin aplicar rango de precio aún)
 function updateSliderFromSpatialFilters() {
     const range = getPriceRangeBySpatialFilters();
     if (range) {
-        // Actualizar el slider al nuevo rango, preservando la selección actual dentro de lo posible
-        updateSliderRange(range.min, range.max, true);
+        // Forzamos la actualización de los límites del slider (sin preservar valores actuales,
+        // para que el rango se ajuste completamente al nuevo macro/zona)
+        updateSliderRange(range.min, range.max, false);
+    } else {
+        // Si no hay puntos en el área seleccionada, deshabilitamos el slider o lo dejamos en 0
+        updateSliderRange(0, 0, false);
     }
 }
 
-// Wrapper para cambios que deben actualizar tanto el slider como los puntos
+// Función que se llama al cambiar macro o zona: actualiza el rango y luego filtra puntos
 function onSpatialFilterChange() {
     updateSliderFromSpatialFilters();
     filterPoints();
@@ -305,7 +315,6 @@ async function init() {
     precioMinGlobal = Math.min(...preciosGlobales);
     precioMaxGlobal = Math.max(...preciosGlobales);
 
-    // Configurar slider inicial con rango global
     $("#price-slider").slider({
         range: true,
         min: precioMinGlobal,
@@ -314,7 +323,7 @@ async function init() {
         slide: function(event, ui) {
             $("#min-price-label").text(Math.round(ui.values[0]).toLocaleString());
             $("#max-price-label").text(Math.round(ui.values[1]).toLocaleString());
-            filterPoints();   // aplicar filtro de precio sobre el estado actual
+            filterPoints();
         }
     });
     $("#min-price-label").text(Math.round(precioMinGlobal).toLocaleString());
@@ -325,7 +334,6 @@ async function init() {
         attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    // Capa de macrodistritos
     macrosLayer = L.geoJSON(macrosGeoJSON, {
         style: { color: '#006400', weight: 2, fillOpacity: 0.05, dashArray: '3' },
         onEachFeature: (feature, layer) => {
@@ -335,7 +343,6 @@ async function init() {
     }).addTo(map);
     setLayerOpacity(macrosLayer, 30);
 
-    // Capa de zonas (por encima de macrodistritos)
     zonasLayer = L.geoJSON(zonasGeoJSON, {
         style: { color: '#8B0000', weight: 2, fillOpacity: 0.08, dashArray: '3' },
         onEachFeature: (feature, layer) => {
@@ -346,7 +353,6 @@ async function init() {
     setLayerOpacity(zonasLayer, 20);
     zonasLayer.bringToFront();
 
-    // Rellenar selectores
     const macroSelect = document.getElementById('macro-select');
     const macrosNombres = [...new Set(macrosGeoJSON.features.map(f => f.properties.macro_ante))].filter(Boolean).sort();
     macrosNombres.forEach(n => {
@@ -365,7 +371,6 @@ async function init() {
         zoneSelect.appendChild(opt);
     });
 
-    // Selector de esquema de color
     const colorSelect = document.getElementById('color-scheme');
     colorScheme = colorSelect.value;
     colorSelect.addEventListener('change', (e) => {
@@ -374,30 +379,22 @@ async function init() {
         if (puntosLayer) recolorPuntos();
     });
 
-    // Filtros espaciales: al cambiar macro o zona, primero ajustamos el slider y luego filtramos puntos
-    macroSelect.addEventListener('change', () => {
-        onSpatialFilterChange();
-    });
-    zoneSelect.addEventListener('change', () => {
-        onSpatialFilterChange();
-    });
+    macroSelect.addEventListener('change', () => onSpatialFilterChange());
+    zoneSelect.addEventListener('change', () => onSpatialFilterChange());
 
-    // Botón reset: restablece macro y zona a "all" y slider a rango global
     document.getElementById('reset-btn').addEventListener('click', () => {
         document.getElementById('macro-select').value = 'all';
         document.getElementById('zone-select').value = 'all';
-        // Actualizar slider al rango global completo
         updateSliderRange(precioMinGlobal, precioMaxGlobal, false);
-        filterPoints();  // filtrará todos los puntos sin restricción espacial
+        filterPoints();
     });
 
-    // Inicializar puntos
     filterPoints();
     updateLegend();
 
     map.on('zoomend', () => updateRadii());
 
-    // Controles de capas (igual que antes, con bringToFront cuando se activan)
+    // Controles de capas (con bringToFront)
     const toggleMacros = document.getElementById('toggle-macros');
     const opacityMacros = document.getElementById('opacity-macros');
     const opacityMacrosVal = document.getElementById('opacity-macros-val');
