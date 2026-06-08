@@ -8,6 +8,10 @@ let precioMinGlobal, precioMaxGlobal;
 let colorScheme = 'quantile';
 let currentFeatures = [];
 
+// Chart instances
+let histogramChart = null;
+let topZonesChart = null;
+
 // Función para calcular radio del círculo según precio y zoom
 function getRadius(precio, zoom) {
     if (precio <= 0) return 3;
@@ -27,9 +31,9 @@ function getQuantileColor(precio, preciosArray) {
     const count = sorted.length;
     const t1 = sorted[Math.floor(count * 1/3)];
     const t2 = sorted[Math.floor(count * 2/3)];
-    if (precio <= t1) return '#1899de';
+    if (precio <= t1) return '#1ca2d7';
     if (precio <= t2) return '#fee08b';
-    return '#df0d0d';
+    return '#fe1a1a';
 }
 
 function updateLegend() {
@@ -155,7 +159,6 @@ function updateSliderRange(minVal, maxVal, preserveCurrent = true) {
     let newMin = minVal;
     let newMax = maxVal;
     if (preserveCurrent) {
-        // Ajustar valores actuales al nuevo rango (clamp)
         newMin = Math.max(minVal, Math.min(currentMin, maxVal));
         newMax = Math.min(maxVal, Math.max(currentMax, minVal));
     }
@@ -165,6 +168,65 @@ function updateSliderRange(minVal, maxVal, preserveCurrent = true) {
     $("#min-price-label").text(Math.round(newMin).toLocaleString());
     $("#max-price-label").text(Math.round(newMax).toLocaleString());
     return { min: newMin, max: newMax };
+}
+
+// Gráfico: histograma de precios
+function updatePriceHistogram(prices) {
+    const ctx = document.getElementById('priceHistogram').getContext('2d');
+    if (!prices.length) {
+        if (histogramChart) histogramChart.destroy();
+        return;
+    }
+    const minPrice = Math.min(...prices);
+    const maxPrice = Math.max(...prices);
+    const binCount = 8;
+    const binWidth = (maxPrice - minPrice) / binCount;
+    const bins = Array(binCount).fill(0);
+    prices.forEach(p => {
+        let idx = Math.floor((p - minPrice) / binWidth);
+        if (idx === binCount) idx = binCount - 1;
+        bins[idx]++;
+    });
+    const labels = bins.map((_, i) => {
+        const start = Math.round(minPrice + i * binWidth);
+        const end = Math.round(minPrice + (i + 1) * binWidth);
+        return `${start.toLocaleString()} - ${end.toLocaleString()}`;
+    });
+    if (histogramChart) histogramChart.destroy();
+    histogramChart = new Chart(ctx, {
+        type: 'bar',
+        data: { labels, datasets: [{ label: 'Frecuencia', data: bins, backgroundColor: '#f97316', borderRadius: 4 }] },
+        options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, title: { display: true, text: 'N° de predios' } }, x: { ticks: { maxRotation: 45, minRotation: 45, font: { size: 9 } } } } }
+    });
+}
+
+// Gráfico: top 5 zonas por precio promedio
+function updateTopZonesChart(features) {
+    const ctx = document.getElementById('topZonesChart').getContext('2d');
+    if (!features.length) {
+        if (topZonesChart) topZonesChart.destroy();
+        return;
+    }
+    const zonePrices = {};
+    features.forEach(f => {
+        const zone = f.properties.GDBSNOMB;
+        if (!zone) return;
+        const price = f.properties.precio_pre;
+        if (!zonePrices[zone]) zonePrices[zone] = { sum: 0, count: 0 };
+        zonePrices[zone].sum += price;
+        zonePrices[zone].count++;
+    });
+    const zoneAvg = Object.entries(zonePrices).map(([zone, data]) => ({ zone, avg: data.sum / data.count }));
+    zoneAvg.sort((a,b) => b.avg - a.avg);
+    const top5 = zoneAvg.slice(0,5);
+    const labels = top5.map(z => z.zone.length > 20 ? z.zone.substring(0,18)+'…' : z.zone);
+    const data = top5.map(z => z.avg);
+    if (topZonesChart) topZonesChart.destroy();
+    topZonesChart = new Chart(ctx, {
+        type: 'bar',
+        data: { labels, datasets: [{ label: 'Precio promedio (USD)', data: data, backgroundColor: '#8B0000', borderRadius: 4 }] },
+        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => `$${Math.round(ctx.raw).toLocaleString()} USD` } } }, scales: { x: { beginAtZero: true, title: { display: true, text: 'Precio (USD)' } }, y: { ticks: { font: { size: 10 } } } } }
+    });
 }
 
 // Función principal de filtrado (combina macrodistrito, zona y rango de precio)
@@ -243,6 +305,10 @@ function filterPoints() {
     document.getElementById('avg-price').innerText = Math.round(avg).toLocaleString();
     document.getElementById('range-price').innerText = count ? `${Math.round(minP).toLocaleString()} - ${Math.round(maxP).toLocaleString()}` : '-';
 
+    // Actualizar gráficos
+    updatePriceHistogram(prices);
+    updateTopZonesChart(features);
+
     if (macrosLayer) {
         macrosLayer.eachLayer(layer => {
             const nombre = layer.feature.properties.macro_ante;
@@ -267,7 +333,7 @@ function filterPoints() {
         });
     }
     
-    // Asegurar que las zonas queden por encima de los macrodistritos
+    // Asegurar orden de capas
     if (zonasLayer) zonasLayer.bringToFront();
     if (puntosLayer) puntosLayer.bringToFront();
 }
@@ -276,12 +342,10 @@ function filterPoints() {
 function updateSliderFromSpatialFilters() {
     const range = getPriceRangeBySpatialFilters();
     if (range) {
-        // Actualizar el slider al nuevo rango, preservando la selección actual dentro de lo posible
         updateSliderRange(range.min, range.max, true);
     }
 }
 
-// Wrapper para cambios que deben actualizar tanto el slider como los puntos
 function onSpatialFilterChange() {
     updateSliderFromSpatialFilters();
     filterPoints();
@@ -305,7 +369,6 @@ async function init() {
     precioMinGlobal = Math.min(...preciosGlobales);
     precioMaxGlobal = Math.max(...preciosGlobales);
 
-    // Configurar slider inicial con rango global
     $("#price-slider").slider({
         range: true,
         min: precioMinGlobal,
@@ -314,7 +377,7 @@ async function init() {
         slide: function(event, ui) {
             $("#min-price-label").text(Math.round(ui.values[0]).toLocaleString());
             $("#max-price-label").text(Math.round(ui.values[1]).toLocaleString());
-            filterPoints();   // aplicar filtro de precio sobre el estado actual
+            filterPoints();
         }
     });
     $("#min-price-label").text(Math.round(precioMinGlobal).toLocaleString());
@@ -325,7 +388,6 @@ async function init() {
         attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    // Capa de macrodistritos
     macrosLayer = L.geoJSON(macrosGeoJSON, {
         style: { color: '#006400', weight: 2, fillOpacity: 0.05, dashArray: '3' },
         onEachFeature: (feature, layer) => {
@@ -335,7 +397,6 @@ async function init() {
     }).addTo(map);
     setLayerOpacity(macrosLayer, 30);
 
-    // Capa de zonas (por encima de macrodistritos)
     zonasLayer = L.geoJSON(zonasGeoJSON, {
         style: { color: '#8B0000', weight: 2, fillOpacity: 0.08, dashArray: '3' },
         onEachFeature: (feature, layer) => {
@@ -346,7 +407,6 @@ async function init() {
     setLayerOpacity(zonasLayer, 20);
     zonasLayer.bringToFront();
 
-    // Rellenar selectores
     const macroSelect = document.getElementById('macro-select');
     const macrosNombres = [...new Set(macrosGeoJSON.features.map(f => f.properties.macro_ante))].filter(Boolean).sort();
     macrosNombres.forEach(n => {
@@ -365,7 +425,6 @@ async function init() {
         zoneSelect.appendChild(opt);
     });
 
-    // Selector de esquema de color
     const colorSelect = document.getElementById('color-scheme');
     colorScheme = colorSelect.value;
     colorSelect.addEventListener('change', (e) => {
@@ -374,30 +433,22 @@ async function init() {
         if (puntosLayer) recolorPuntos();
     });
 
-    // Filtros espaciales: al cambiar macro o zona, primero ajustamos el slider y luego filtramos puntos
-    macroSelect.addEventListener('change', () => {
-        onSpatialFilterChange();
-    });
-    zoneSelect.addEventListener('change', () => {
-        onSpatialFilterChange();
-    });
+    macroSelect.addEventListener('change', () => onSpatialFilterChange());
+    zoneSelect.addEventListener('change', () => onSpatialFilterChange());
 
-    // Botón reset: restablece macro y zona a "all" y slider a rango global
     document.getElementById('reset-btn').addEventListener('click', () => {
         document.getElementById('macro-select').value = 'all';
         document.getElementById('zone-select').value = 'all';
-        // Actualizar slider al rango global completo
         updateSliderRange(precioMinGlobal, precioMaxGlobal, false);
-        filterPoints();  // filtrará todos los puntos sin restricción espacial
+        filterPoints();
     });
 
-    // Inicializar puntos
     filterPoints();
     updateLegend();
 
     map.on('zoomend', () => updateRadii());
 
-    // Controles de capas (igual que antes, con bringToFront cuando se activan)
+    // Controles de capas (con bringToFront)
     const toggleMacros = document.getElementById('toggle-macros');
     const opacityMacros = document.getElementById('opacity-macros');
     const opacityMacrosVal = document.getElementById('opacity-macros-val');
