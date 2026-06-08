@@ -13,8 +13,6 @@
     <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.js"></script>
     <!-- Turf.js -->
     <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -22,7 +20,7 @@
         body { background: #1a1e2c; color: #f0f0f0; }
         .dashboard { display: flex; height: 100vh; overflow: hidden; }
         .sidebar {
-            width: 340px;
+            width: 320px;
             background: rgba(18, 22, 35, 0.95);
             backdrop-filter: blur(10px);
             border-right: 1px solid rgba(255,255,255,0.1);
@@ -68,22 +66,6 @@
             font-weight: bold;
         }
         .btn-reset:hover { background: #fd7e24; }
-        /* Estilos para gráficos */
-        .chart-container {
-            background: #0f1119;
-            border-radius: 12px;
-            padding: 12px;
-            margin-top: 20px;
-        }
-        .chart-container h4 {
-            font-size: 0.85rem;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            color: #ccc;
-        }
-        canvas { max-height: 200px; width: 100%; }
         .main-content { flex: 1; position: relative; }
         #map { height: 100%; width: 100%; background: #1a1e2c; }
         .info-panel {
@@ -184,9 +166,8 @@
             border-radius: 2px;
         }
         @media (max-width: 768px) {
-            .sidebar { width: 280px; }
+            .sidebar { width: 260px; }
             .map-layer-control { top: 10px; right: 10px; padding: 8px; min-width: 180px; }
-            .chart-container canvas { max-height: 150px; }
         }
     </style>
 </head>
@@ -221,21 +202,11 @@
             <p><i class="fa-solid fa-ranking-star"></i> Rango: <span id="range-price">-</span></p>
         </div>
 
-        <!-- Gráficos -->
-        <div class="chart-container">
-            <h4><i class="fa-solid fa-chart-column"></i> Distribución de precios</h4>
-            <canvas id="priceHistogram"></canvas>
-        </div>
-        <div class="chart-container">
-            <h4><i class="fa-solid fa-chart-simple"></i> Top 5 zonas (mayor precio promedio)</h4>
-            <canvas id="topZonesChart"></canvas>
-        </div>
-
         <button id="reset-btn" class="btn-reset"><i class="fa-solid fa-arrows-spin"></i> Restablecer filtros</button>
     </div>
     <div class="main-content">
         <div id="map"></div>
-        <div class="info-panel"><i class="fa-regular fa-circle-info"></i> Círculo más grande = mayor precio</div>
+        <!-- <div class="info-panel"><i class="fa-regular fa-circle-info"></i> Círculo más grande = mayor precio</div> -->
         
         <div class="map-layer-control">
             <h4><i class="fa-solid fa-layer-group"></i> Capas</h4>
@@ -282,9 +253,9 @@
 
         <div id="legend" class="map-legend" style="display: none;">
             <div class="legend-title">Categoria de Precios</div>
-            <div class="legend-item"><div class="legend-color" style="background: #1ca2d7;"></div><span>Precio bajo</span></div>
+            <div class="legend-item"><div class="legend-color" style="background: #169aff;"></div><span>Precio bajo</span></div>
             <div class="legend-item"><div class="legend-color" style="background: #fee08b;"></div><span>Precio medio</span></div>
-            <div class="legend-item"><div class="legend-color" style="background: #fe1a1a;"></div><span>Precio alto</span></div>
+            <div class="legend-item"><div class="legend-color" style="background: #ff1e1e;"></div><span>Precio alto</span></div>
         </div>
     </div>
 </div>
